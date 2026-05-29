@@ -1,0 +1,190 @@
+VirusTotal Threat Intelligence Checker
+Author: Jazmarie Hyder
+Description: Query the VirusTotal API to check IPs, URLs, and file hashes
+             for malicious activity. Useful for SOC triage and threat hunting.
+
+Requirements:
+    pip install requests
+    
+Setup:
+    1. Sign up for a free account at https://www.virustotal.com
+    2. Go to your profile and copy your API key
+    3. Replace "YOUR_API_KEY_HERE" below with your actual key
+"""
+
+import requests
+import json
+
+# -------------------------------------------------------
+# CONFIG — paste your VirusTotal API key here
+# -------------------------------------------------------
+API_KEY = "YOUR_API_KEY_HERE"
+
+# Base URL for the VirusTotal API v3
+BASE_URL = "https://www.virustotal.com/api/v3"
+
+# Headers sent with every request — this is how the API authenticates you
+HEADERS = {
+    "x-apikey": API_KEY
+}
+
+
+# -------------------------------------------------------
+# HELPER FUNCTION — prints a clean summary of results
+# -------------------------------------------------------
+def print_results(indicator, indicator_type, data):
+    """
+    Parses the API response and prints a readable summary.
+    'data' is the JSON response from VirusTotal.
+    """
+    try:
+        stats = data["data"]["attributes"]["last_analysis_stats"]
+        malicious   = stats.get("malicious", 0)
+        suspicious  = stats.get("suspicious", 0)
+        harmless    = stats.get("harmless", 0)
+        undetected  = stats.get("undetected", 0)
+        total       = malicious + suspicious + harmless + undetected
+
+        print("\n" + "="*50)
+        print(f"  INDICATOR : {indicator}")
+        print(f"  TYPE      : {indicator_type.upper()}")
+        print("="*50)
+        print(f"  Malicious  : {malicious}/{total} engines flagged this")
+        print(f"  Suspicious : {suspicious}")
+        print(f"  Harmless   : {harmless}")
+        print(f"  Undetected : {undetected}")
+
+        # Give a simple verdict based on malicious count
+        if malicious >= 5:
+            print("\n  [!] VERDICT: HIGH RISK — multiple engines flagged this")
+        elif malicious >= 1:
+            print("\n  [~] VERDICT: LOW/MED RISK — flagged by at least one engine")
+        else:
+            print("\n  [✓] VERDICT: CLEAN — no engines flagged this")
+
+        print("="*50 + "\n")
+
+    except KeyError:
+        print("[ERROR] Unexpected response format. Check your API key or input.")
+        print(json.dumps(data, indent=2))
+
+
+# -------------------------------------------------------
+# FUNCTION 1 — Check an IP address
+# -------------------------------------------------------
+def check_ip(ip):
+    """
+    Sends a GET request to the VirusTotal /ip_addresses endpoint.
+    Returns analysis stats for the given IP.
+    """
+    print(f"\n[*] Checking IP: {ip}")
+    url = f"{BASE_URL}/ip_addresses/{ip}"
+
+    # Make the API call
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        print_results(ip, "IP Address", response.json())
+    elif response.status_code == 404:
+        print(f"[!] IP {ip} not found in VirusTotal database.")
+    elif response.status_code == 401:
+        print("[!] Invalid API key. Check your key and try again.")
+    else:
+        print(f"[!] Error {response.status_code}: {response.text}")
+
+
+# -------------------------------------------------------
+# FUNCTION 2 — Check a URL
+# -------------------------------------------------------
+def check_url(url_to_check):
+    """
+    VirusTotal requires URLs to be base64-encoded before lookup.
+    We encode it, then query the /urls endpoint.
+    """
+    import base64
+
+    print(f"\n[*] Checking URL: {url_to_check}")
+
+    # Encode the URL — VirusTotal v3 requires this for URL lookups
+    url_id = base64.urlsafe_b64encode(url_to_check.encode()).decode().strip("=")
+    url = f"{BASE_URL}/urls/{url_id}"
+
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        print_results(url_to_check, "URL", response.json())
+    elif response.status_code == 404:
+        print(f"[!] URL not found. It may not have been scanned yet.")
+    elif response.status_code == 401:
+        print("[!] Invalid API key. Check your key and try again.")
+    else:
+        print(f"[!] Error {response.status_code}: {response.text}")
+
+
+# -------------------------------------------------------
+# FUNCTION 3 — Check a file hash (MD5, SHA1, or SHA256)
+# -------------------------------------------------------
+def check_hash(file_hash):
+    """
+    Queries VirusTotal for a known file hash.
+    Useful for checking if a suspicious file has been seen before.
+    Supports MD5, SHA1, and SHA256.
+    """
+    print(f"\n[*] Checking hash: {file_hash}")
+    url = f"{BASE_URL}/files/{file_hash}"
+
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        print_results(file_hash, "File Hash", response.json())
+    elif response.status_code == 404:
+        print(f"[!] Hash not found. File may not be in VirusTotal's database.")
+    elif response.status_code == 401:
+        print("[!] Invalid API key. Check your key and try again.")
+    else:
+        print(f"[!] Error {response.status_code}: {response.text}")
+
+
+# -------------------------------------------------------
+# MAIN MENU — interactive CLI for running lookups
+# -------------------------------------------------------
+def main():
+    print("\n========================================")
+    print("   VirusTotal Threat Intel Checker")
+    print("   by Jazmarie Hyder")
+    print("========================================")
+
+    while True:
+        print("\nWhat would you like to check?")
+        print("  1 - IP Address")
+        print("  2 - URL")
+        print("  3 - File Hash (MD5/SHA1/SHA256)")
+        print("  4 - Exit")
+
+        choice = input("\nEnter choice (1-4): ").strip()
+
+        if choice == "1":
+            ip = input("Enter IP address: ").strip()
+            check_ip(ip)
+
+        elif choice == "2":
+            url = input("Enter URL (include https://): ").strip()
+            check_url(url)
+
+        elif choice == "3":
+            file_hash = input("Enter file hash: ").strip()
+            check_hash(file_hash)
+
+        elif choice == "4":
+            print("\n[*] Exiting. Stay safe out there.\n")
+            break
+
+        else:
+            print("[!] Invalid choice. Enter 1, 2, 3, or 4.")
+
+
+# -------------------------------------------------------
+# Run the script
+# -------------------------------------------------------
+if __name__ == "__main__":
+    main()
